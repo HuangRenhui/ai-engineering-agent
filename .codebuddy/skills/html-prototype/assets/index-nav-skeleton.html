@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{项目名}} · 原型导航</title>
+<style>
+:root{--c-primary:#2f6fed;--c-text:#1f2329;--c-text-sub:#646a73;--c-border:#dee0e3;--c-bg:#f5f6f7;--c-surface:#fff;--radius:6px;--space:16px;--font:"PingFang SC","Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font);background:var(--c-bg);color:var(--c-text)}
+.wrap{max-width:960px;margin:0 auto;padding:32px 16px}
+h1{font-size:22px;margin:0 0 8px}
+.sub{color:var(--c-text-sub);margin-bottom:24px}
+.group{background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--radius);padding:var(--space);margin-bottom:var(--space)}
+.group h2{font-size:15px;margin:0 0 12px;color:var(--c-text-sub)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.card{display:block;padding:16px;border:1px solid var(--c-border);border-radius:var(--radius);text-decoration:none;color:var(--c-text);background:var(--c-surface);transition:.15s}
+.card:hover{border-color:var(--c-primary);color:var(--c-primary);box-shadow:0 2px 8px rgba(47,111,237,.12)}
+.card .fid{font-size:12px;color:var(--c-text-sub)}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>{{项目名}} · 原型导航</h1>
+    <div class="sub">{{模式说明}} ｜ 共 {{页面数}} 个页面 ｜ 生成时间 {{时间}}</div>
+
+    <!-- 每个模块一个 group -->
+    <div class="group">
+      <h2>{{模块名}}</h2>
+      <div class="cards">
+        <a class="card" href="{{页面文件}}.html"><div class="fid">F{{功能ID}}</div><div>{{页面名称}}</div></a>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

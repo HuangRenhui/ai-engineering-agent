@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{页面标题}} · 原型</title>
+<style>
+:root{--c-primary:#2f6fed;--c-primary-dark:#1f52bb;--c-text:#1f2329;--c-text-sub:#646a73;--c-border:#dee0e3;--c-bg:#f5f6f7;--c-surface:#fff;--c-success:#34c724;--c-warning:#ff8800;--c-danger:#f54a45;--radius:6px;--space:16px;--space-sm:8px;--font:"PingFang SC","Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font);color:var(--c-text);background:var(--c-bg);font-size:14px}
+.topbar{height:56px;background:var(--c-surface);border-bottom:1px solid var(--c-border);display:flex;align-items:center;padding:0 var(--space);gap:var(--space)}
+.topbar .brand{font-weight:600}
+.topbar .spacer{flex:1}
+.layout{display:flex;min-height:calc(100vh - 56px)}
+.side{width:200px;background:var(--c-surface);border-right:1px solid var(--c-border);padding:var(--space-sm) 0}
+.side a{display:block;padding:10px var(--space);color:var(--c-text-sub);text-decoration:none}
+.side a.active,.side a:hover{background:var(--c-bg);color:var(--c-primary)}
+.main{flex:1;padding:var(--space)}
+.crumb{color:var(--c-text-sub);margin-bottom:var(--space-sm)}
+h1{font-size:18px;margin:0 0 var(--space)}
+.card{background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--radius);padding:var(--space);margin-bottom:var(--space)}
+.toolbar{display:flex;gap:var(--space-sm);flex-wrap:wrap;align-items:center;margin-bottom:var(--space-sm)}
+.btn{padding:6px 14px;border-radius:var(--radius);border:1px solid var(--c-border);background:var(--c-surface);cursor:pointer}
+.btn.primary{background:var(--c-primary);border-color:var(--c-primary);color:#fff}
+.btn.danger{background:var(--c-danger);border-color:var(--c-danger);color:#fff}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--c-border)}
+th{background:var(--c-bg);font-weight:500;color:var(--c-text-sub)}
+tbody tr:hover{background:#fafbfc}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px}
+.tag.ok{background:#e8f7e6;color:var(--c-success)}
+.tag.warn{background:#fff3e0;color:var(--c-warning)}
+.tag.err{background:#fdeceb;color:var(--c-danger)}
+.state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 0;color:var(--c-text-sub);gap:8px}
+.toast{position:fixed;top:16px;right:16px;background:#1f2329;color:#fff;padding:10px 16px;border-radius:var(--radius);opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">{{系统名}}</div>
+    <div class="spacer"></div>
+    <div>{{当前用户}}</div>
+  </header>
+
+  <div class="layout">
+    <nav class="side">
+      <a href="index.html">← 返回导航</a>
+      <a class="active" href="#">{{菜单1}}</a>
+      <a href="#">{{菜单2}}</a>
+    </nav>
+
+    <main class="main">
+      <div class="crumb">首页 / {{模块}} / {{页面标题}} <span style="color:#bbb">F{{功能ID}}</span></div>
+      <h1>{{页面标题}}</h1>
+
+      <div class="card">
+        <div class="toolbar">
+          <!-- 状态切换器：用于原型演示，覆盖加载/空/正常/错误/无权限 -->
+          <label>状态：
+            <select id="stateSwitch">
+              <option value="success">正常</option>
+              <option value="loading">加载中</option>
+              <option value="empty">空数据</option>
+              <option value="error">错误</option>
+              <option value="denied">无权限</option>
+            </select>
+          </label>
+          <input placeholder="{{查询条件占位}}" />
+          <button class="btn primary" onclick="toast('查询完成')">查询</button>
+          <button class="btn" onclick="toast('已重置')">重置</button>
+        </div>
+
+        <div id="view"></div>
+      </div>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+// 真实感假数据（占位，由具体页面替换）
+var DEMO_ROWS = [
+  { id: "{{编号格式}}", name: "{{名称样例}}", status: "正常", time: "{{时间样例}}" },
+  { id: "{{编号格式}}", name: "{{名称样例}}", status: "异常", time: "{{时间样例}}" }
+];
+
+function render(state) {
+  var v = document.getElementById('view');
+  if (state === 'loading') { v.innerHTML = '<div class="state">加载中…</div>'; return; }
+  if (state === 'empty') { v.innerHTML = '<div class="state">暂无数据 <button class="btn primary" onclick="toast(\'新建\')">新建</button></div>'; return; }
+  if (state === 'error') { v.innerHTML = '<div class="state">加载失败：{{错误原因}} <button class="btn" onclick="render(\'success\')">重试</button></div>'; return; }
+  if (state === 'denied') { v.innerHTML = '<div class="state">暂无访问权限 <a href="index.html">返回导航</a></div>'; return; }
+  var rows = DEMO_ROWS.map(function (r) {
+    return '<tr><td>' + r.id + '</td><td>' + r.name + '</td><td>' + r.status + '</td><td>' + r.time + '</td></tr>';
+  }).join('');
+  v.innerHTML = '<table><thead><tr><th>{{列1}}</th><th>{{列2}}</th><th>状态</th><th>{{列4}}</th></tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+function toast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(function () { t.classList.remove('show'); }, 3000);
+}
+
+document.getElementById('stateSwitch').addEventListener('change', function (e) { render(e.target.value); });
+render('success');
+</script>
+</body>
+</html>
