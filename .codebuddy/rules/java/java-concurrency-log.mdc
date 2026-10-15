@@ -1,0 +1,363 @@
+---
+description: 阿里巴巴 Java 开发手册·并发与异常日志规约（嵩山版）——并发处理、错误码、异常处理、日志规约。当编写或审查涉及多线程/线程池/锁/并发安全、异常抛出与捕获、日志打印、错误码定义、以及定位并发类 bug 时加载。触发词：线程、线程池、锁、并发、死锁、volatile、ThreadLocal、SimpleDateFormat、异常、catch、throw、日志、log、logger、错误码。
+alwaysApply: false
+enabled: true
+updatedAt: 2026-08-11T15:37:07.190Z
+provider: 
+---
+
+# Java 开发手册 · 并发与异常日志规约
+
+> 来源：阿里巴巴 Java 开发手册（嵩山版），按使用场景拆分后的【并发与异常日志】部分。依据约束力强弱及故障敏感性，规约分为【强制】/【推荐】/【参考】。
+
+## 一、并发处理
+
+#### 1. 【强制】获取单例对象需要保证线程安全，其中的方法也要保证线程安全。
+
+> **说明：** 资源驱动类、工具类、单例工厂类都需要注意。
+
+#### 2. 【强制】创建线程或线程池时请指定有意义的线程名称，方便出错时回溯。
+
+> **正例：** 自定义线程工厂，并且根据外部特征进行分组，比如，来自同一机房的调用，把机房编号赋值给whatFeatureOfGroup
+
+```java
+public class UserThreadFactory implements ThreadFactory { private final String namePrefix;
+    private final AtomicInteger nextId = new AtomicInteger(1);
+
+    // 定义线程组名称，在利用 jstack 来排查问题时，非常有帮助
+    UserThreadFactory(String whatFeatureOfGroup) {
+        namePrefix = "From UserThreadFactory's " + whatFeatureOfGroup + "-Worker-"; }
+
+    @Override
+    public Thread newThread(Runnable task) {
+        String name = namePrefix + nextId.getAndIncrement();
+        Thread thread = new Thread(null, task, name, 0, false);
+        System.out.println(thread.getName());
+        return thread; }
+}
+```
+
+#### 3. 【强制】线程资源必须通过线程池提供，不允许在应用中自行显式创建线程。
+
+> **说明：** 线程池的好处是减少在创建和销毁线程上所消耗的时间以及系统资源的开销，解决资源不足的问题。如果不使用线程池，有可能造成系统创建大量同类线程而导致消耗完内存或者"过度切换"的问题。
+
+#### 4. 【强制】线程池不允许使用 Executors 去创建，而是通过 ThreadPoolExecutor 的方式，这样的处理方式让写的同学更加明确线程池的运行规则，规避资源耗尽的风险。
+
+> **说明：** Executors 返回的线程池对象的弊端如下：
+
+1. FixedThreadPool 和 SingleThreadPool：
+允许的请求队列长度为 Integer.MAX_VALUE，可能会堆积大量的请求，从而导致 OOM。
+
+2. CachedThreadPool：
+允许的创建线程数量为 Integer.MAX_VALUE，可能会创建大量的线程，从而导致 OOM。
+
+#### 5. 【强制】SimpleDateFormat 是线程不安全的类，一般不要定义为 static 变量，如果定义为 static，必须加锁，或者使用 DateUtils 工具类。
+
+> **正例：** 注意线程安全，使用 DateUtils。亦推荐如下处理：
+
+```java
+private static final ThreadLocal <DateFormat> df = new ThreadLocal<DateFormat>() { @Override
+    protected DateFormat initialValue() {
+        return new SimpleDateFormat("yyyy-MM-dd"); }
+};
+```
+
+> **说明：** 如果是 JDK8 的应用，可以使用 Instant 代替 Date，LocalDateTime 代替 Calendar， DateTimeFormatter 代替 SimpleDateFormat，官方给出的解释：simple beautiful strong immutable thread-safe。
+
+#### 6. 【强制】必须回收自定义的 ThreadLocal 变量，尤其在线程池场景下，线程经常会被复用，如果不清理自定义的 ThreadLocal 变量，可能会影响后续业务逻辑和造成内存泄露等问题。尽量在代理中使用 try-finally 块进行回收。
+
+> **正例：**
+
+```java
+objectThreadLocal.set(userInfo);
+try {
+    // ...
+} finally {
+    objectThreadLocal.remove(); }
+```
+
+#### 7. 【强制】高并发时，同步调用应该去考量锁的性能损耗。能用无锁数据结构，就不要用锁；能锁区块，就不要锁整个方法体；能用对象锁，就不要用类锁。
+
+> **说明：** 尽可能使加锁的代码块工作量尽可能的小，避免在锁代码块中调用 RPC 方法。
+
+#### 8. 【强制】对多个资源、数据库表、对象同时加锁时，需要保持一致的加锁顺序，否则可能会造成死锁。
+
+> **说明：** 线程一需要对表 A、B、C 依次全部加锁后才可以进行更新操作，那么线程二的加锁顺序也必须是 A、B、C，否则可能出现死锁。
+
+#### 9. 【强制】在使用阻塞等待获取锁的方式中，必须在 try 代码块之外，并且在加锁方法与 try 代码块之间没有任何可能抛出异常的方法调用，避免加锁成功后，在 finally 中无法解锁。
+
+> **说明一：** 如果在 lock 方法与 try 代码块之间的方法调用抛出异常，那么无法解锁，造成其它线程无法成功获取锁。
+
+> **说明二：** 如果 lock 方法在 try 代码块之内，可能由于其它方法抛出异常，导致在 finally 代码块中，unlock对未加锁的对象解锁，它会调用 AQS 的 tryRelease 方法（取决于具体实现类），抛出 IllegalMonitorStateException 异常。
+
+> **说明三：** 在 Lock 对象的 lock 方法实现中可能抛出 unchecked 异常，产生的后果与说明二相同。
+
+> **正例：**
+
+```java
+Lock lock = new XxxLock();
+// ...
+lock.lock();
+try {
+    doSomething();
+    doOthers(); } finally {
+    lock.unlock(); }
+```
+
+> **反例：**
+
+```java
+Lock lock = new XxxLock();
+// ...
+
+try {
+    // 如果此处抛出异常，则直接执行 finally 代码块doSomething();
+    // 无论加锁是否成功，finally 代码块都会执行
+    lock.lock();
+    doOthers(); } finally {
+    lock.unlock(); }
+```
+
+#### 10. 【强制】在使用尝试机制来获取锁的方式中，进入业务代码块之前，必须先判断当前线程是否持有锁。锁的释放规则与锁的阻塞等待方式相同。
+
+> **说明：** Lock 对象的 unlock 方法在执行时，它会调用 AQS 的 tryRelease 方法（取决于具体实现类），如果当前线程不持有锁，则抛出 IllegalMonitorStateException 异常。
+
+> **正例：**
+
+```java
+Lock lock = new XxxLock();
+// ...
+boolean isLocked = lock.tryLock();
+if (isLocked) {
+    try {
+        doSomething();
+        doOthers(); } finally {
+        lock.unlock(); }
+}
+```
+
+#### 11. 【强制】并发修改同一记录时，避免更新丢失， 需要加锁。要么在应用层加锁，要么在缓存加锁，要么在数据库层使用乐观锁，使用 version 作为更新依据。
+
+> **说明：** 如果每次访问冲突概率小于 20%，推荐使用乐观锁，否则使用悲观锁。乐观锁的重试次数不得小于3 次。
+
+#### 12. 【强制】多线程并行处理定时任务时，Timer 运行多个 TimeTask 时，只要其中之一没有捕获抛出的异常，其它任务便会自动终止运行，使用 ScheduledExecutorService 则没有这个问题。
+
+#### 13. 【推荐】资金相关的金融敏感信息，使用悲观锁策略。
+
+> **说明：** 乐观锁在获得锁的同时已经完成了更新操作，校验逻辑容易出现漏洞，另外，乐观锁对冲突的解决策略有较复杂的要求，处理不当容易造成系统压力或数据异常，所以资金相关的金融敏感信息不建议使用乐观锁更新。
+
+> **正例：** 悲观锁遵循一锁、二判、三更新、四释放的原则。
+
+#### 14. 【推荐】使用 CountDownLatch 进行异步转同步操作，每个线程退出前必须调用 countDown 方法，线程执行代码注意 catch 异常，确保 countDown 方法被执行到，避免主线程无法执行至 await 方法，直到超时才返回结果。
+
+> **说明：** 注意，子线程抛出异常堆栈，不能在主线程 try-catch 到。
+
+#### 15. 【推荐】避免 Random 实例被多线程使用，虽然共享该实例是线程安全的，但会因竞争同一 seed导致的性能下降。
+
+> **说明：** Random 实例包括 java.util.Random 的实例或者 Math.random()的方式。
+
+> **正例：** 在 JDK7 之后，可以直接使用 API ThreadLocalRandom，而在 JDK7 之前，需要编码保证每个线程持有一个单独的 Random 实例。
+
+#### 16. 【推荐】通过双重检查锁（double-checked locking）（在并发场景下）存在延迟初始化的优化问题隐患（可参考 The "Double-Checked Locking is Broken " Declaration），推荐解决方案中较为简单一种（适用于 JDK5 及以上版本），将目标属性声明为 volatile 型，比如将 helper 的属性声明修改为`private volatile Helper helper = null;`。
+
+> **正例：**
+
+```java
+public class LazyInitDemo {
+    private volatile Helper helper = null;
+
+    public Helper getHelper() {
+        if (helper == null) {
+            synchronized (this) {
+                if (helper == null) { helper = new Helper(); } }
+        }
+        return helper; }
+    // other methods and fields...
+}
+```
+
+#### 17. 【参考】volatile 解决多线程内存不可见问题。对于一写多读，是可以解决变量同步问题，但是如果多写，同样无法解决线程安全问题。
+
+> **说明：** 如果是 count++操作，使用如下类实现：AtomicInteger count = new AtomicInteger();
+
+count.addAndGet(1）; 如果是 JDK8，推荐使用 LongAdder 对象，比 AtomicLong 性能更好（减少乐观锁的重试次数）。
+
+#### 18. 【参考】HashMap 在容量不够进行 resize 时由于高并发可能出现死链，导致 CPU 飙升，在开发过程中注意规避此风险。
+
+#### 19. 【参考】ThreadLocal 对象使用 static 修饰，ThreadLocal 无法解决共享对象的更新问题。
+
+> **说明：** 这个变量是针对一个线程内所有操作共享的，所以设置为静态变量，所有此类实例共享此静态变量，也就是说在类第一次被使用时装载，只分配一块存储空间，所有此类的对象(只要是这个线程内定义的)都可以操控这个变量。
+
+## 二、错误码
+
+#### 1. 【强制】错误码的制定原则：快速溯源、简单记忆、沟通标准化。
+
+> **说明：** 错误码想得过于完美和复杂，就像康熙字典中的生僻字一样，用词似乎精准，但是字典不容易翻到，但是明确定义一些常见错误会给你的工作带来很大便利。
+
+#### 2. 【强制】错误码不体现版本号和错误等级等信息，错误码必须是数字类型，并且错误码不能以 0 开头。
+
+> **说明：** 错误码与错误等级无关，不会随版本变化而改变。
+
+#### 3. 【强制】错误码均为字符串类型，共 5 位，分为两个部分：错误产生来源+四位数字编号。
+
+> **说明：** 错误产生来源分为 A/B/C，A 表示错误来源于用户，比参数错误，用户安装版本过低，用户支付超时等问题；B 表示错误来源于当前系统，往往是业务逻辑出错，或程序健壮性差等；C 表示错误来源于第三方服务，比如 CDN 服务出错，消息投递超时等问题；四位数字编号从 0001 到 9999，代表大类错误码的一个子类。
+
+#### 4. 【强制】错误码回答的问题是谁的问题，答案有四类：B2C 场景，答案一般是用户，所以错误码第一位是 A。
+
+#### 5. 【强制】调用第三方接口，一定要自定义错误码并尽量根据错误码定位第三方错误。
+
+#### 6. 【强制】当 Java 对象转换成 JSON 时，如果转换失败，该对象中的日期格式会产生错误码。
+
+#### 7. 【推荐】平台类错误码由统一出口管理，错误码说明必须和业务场景对应。
+
+#### 8. 【推荐】错误码不能直接输出给用户看到，而是作为异常记录一定意义，用户看到的是："您操作太快，请稍后再试"。
+
+#### 9. 【推荐】错误码使用之后，不能随意改变，如需变动，需经过评审。
+
+#### 10. 【参考】错误码字符串共 5 位，前 2 位为来源，后 3 位为编号，来源说明如下：
+
+| 错误码来源 | 含义 | 示例 |
+| --- | --- | --- |
+| A | 来源于用户 | A1001 参数错误 |
+| B | 来源于当前系统 | B1001 系统内部错误 |
+| C | 来源于第三方服务 | C1001 第三方服务异常 |
+
+#### 11. 【参考】错误码定义使用枚举类型，枚举名为 ErrorCodeEnum，枚举成员为 ERROR_CODE。
+
+## 三、异常处理
+
+#### 1. 【强制】Java 类库中定义的可以通过预检查方式规避的 RuntimeException 异常不应该通过 catch 的方式来处理，比如：NullPointerException，IndexOutOfBoundsException 等等。
+
+> **说明：** 无法通过预检查的异常除外，比如，在解析字符串形式的数字时，可能存在数字格式错误，不得不通过 catch NumberFormatException 来实现。
+
+> **正例：**
+
+```java
+if (obj != null) {...}
+```
+
+> **反例：** 用 try-catch 来做预检查（逻辑错误），捕获到异常之后再做逻辑判断。
+
+#### 2. 【强制】异常不要用来做流程控制，条件控制，因为异常的处理效率比条件分支低。
+
+#### 3. 【强制】catch 时请分清稳定代码和非稳定代码，稳定代码指的是无论如何不会出错的代码。对于非稳定代码的 catch 尽可能进行区分异常类型，再做对应的异常处理。
+
+> **说明：** 对大段代码进行 try-catch，使程序无法根据不同的异常做出正确的应激反应，也不利于定位问题，这是一种不负责任的表现。
+
+#### 4. 【强制】捕获异常是为了处理它，不要捕获了却什么都不处理而抛弃之，如果不想处理它，请将该异常抛给它的调用者。最外层的业务使用者，必须处理异常，将其转化为用户可以理解的内容。
+
+> **反例：**
+
+```java
+try {
+    throw new RuntimeException("a");
+} catch (RuntimeException e) {
+    return; }
+```
+
+#### 5. 【强制】有 try 块放到了事务代码中，catch 异常后，如果需要回滚事务，一定要注意手动回滚事务。
+
+#### 6. 【强制】finally 块必须对资源对象、流对象进行关闭，有异常也要做 try-catch。
+
+> **说明：** 如果是 JDK7 及以上，可以使用 try-with-resources 方式。
+
+#### 7. 【强制】不要在 finally 块中使用 return。
+
+> **说明：** finally 块中的 return 返回后方法结束执行，不会再执行 try 块中的 return 语句。
+
+#### 8. 【强制】捕获异常与抛异常，必须是完全匹配，或者是捕获异常是抛异常的父类。
+
+> **说明：** 如果预期对方抛的是绣球，实际接到的是铅球，就会产生意外的事故。
+
+#### 9. 【强制】在调用 RPC、二方包、或动态生成类相关的方法时，捕捉异常必须用 Throwable 类来进行捕捉。
+
+> **说明：** 通过反射机制来调用方法，如果找不到方法，抛出 NoSuchMethodException。什么情况会抛出 NoSuchMethodError？二方包在类冲突时，仲裁机制可能引入非预期的版本，使类的各种方法定义变化，而 JVM 满足的复杂度原则，在不了解调用方的情况下对调用方隐藏了类冲突的事实。异常是抛出方法找不到，而错误是抛出方法找不到，错误更致命。
+
+#### 10. 【推荐】方法的返回值可以为 null，不强制返回空集合，或者空对象等，但必须添加注释充分说明什么情况下会返回 null 值。
+
+> **说明：** 本手册明确防止 NPE 是调用者的责任。即使被调用方法返回空集合或者空对象，对调用者来说，也并非高枕无忧，必须考虑到远程调用失败、序列化失败、运行时异常等场景返回 null 的情况。
+
+#### 11. 【推荐】防止 NPE，是程序员的基本修养，注意 NPE 产生的场景：
+
+1. 返回类型为基本数据类型，return 包装数据类型的对象时，自动拆箱有可能产生 NPE。
+
+> **反例：**
+
+```java
+public int f() { return Integer对象; 如果为 null，自动解箱抛 NPE}
+```
+
+2. 数据库的查询结果可能为 null。
+3. 集合里的元素即使 isNotEmpty，取出的数据元素也可能为 null。
+4. 远程调用返回对象时，一律要求进行空指针判断，防止 NPE。
+5. 对于 Session 中获取的数据，建议进行 NPE 检查，避免空指针。
+6. 级联调用 obj.getA().getB().getC()；一连串调用，易产生 NPE。
+
+> **正例：** 使用 JDK8 的 Optional 类来防止 NPE 问题。
+
+#### 12. 【推荐】定义时区分 unchecked / checked 异常，避免直接抛出 new RuntimeException()，更是禁止抛出 Exception 或者 Throwable，应使用有业务含义的自定义异常。推荐业界已定义过的自定义异常，如：ArgumentException, NotFoundException, BizException 等。
+
+#### 13. 【参考】对于公司外的 http/api 开放接口，必须使用"错误码"；而应用内部推荐异常抛出；跨应用间 RPC 调用优先考虑使用 Result 方式，封装 isSuccess() 方法、错误码、错误简短信息。
+
+> **说明：** 关于 RPC 方法返回方式使用 Result 方式的理由：
+
+1. 使用抛异常返回方式，调用方如果没有捕获到就会产生运行时错误。
+2. 如果不加栈信息，只是 new 自定义异常，加入自己的理解的 error message，当调用方出错的时候，却不知道是什么错误，会使排查问题难度加大。
+
+## 四、日志规约
+
+#### 1. 【强制】应用中不可直接使用日志系统（Log4j、Logback）中的 API，而应依赖使用日志框架 SLF4J 中的 API，使用门面模式的日志框架，有利于维护和各个类的日志处理方式统一。
+
+> **说明：** 使用 slf4j 的 API 进行处理，如：import org.slf4j.LoggerFactory; import org.slf4j.Logger;
+
+#### 2. 【强制】使用文件形式记录日志时，必须使用异步日志方式。
+
+#### 3. 【强制】应用中的扩展日志（如打点、临时监控、访问日志等）命名方式：appName_logType_logName.log。
+
+> **说明：** logType 为日志类型，如 stats/monitor/access 等；logName 为日志描述。这种命名的好处：通过文件名就可知道日志文件属于什么应用，什么类型，什么目的，也有利于归类查找。
+
+> **正例：** mppserver 应用中单独监控时区转换异常，如：mppserver_monitor_timeZoneConvert.log
+
+#### 4. 【强制】在日志输出时，字符串变量之间的拼接使用占位符的方式。
+
+> **说明：** 因为 String 字符串的拼接会使用 StringBuilder 的 append()方式，有一定的性能损耗。使用占位符仅是替换动作，可以有效提升性能。
+
+> **正例：**
+
+```java
+logger.debug("Processing trade with id: {} and symbol: {}", id, symbol);
+```
+
+#### 5. 【强制】对于 trace/debug/info 级别的日志输出，必须进行级别的开关判断。
+
+> **说明：** 虽然在 debug(参数)的方法体内第一行代码isDisabled(Level.DEBUG_INT) 进行判断，在参数上进行字符串拼接操作，如果参数是对象，需要进行 toString() 方法，即使没有输出日志，也会执行 toString() 方法，浪费时间，应避免。
+
+> **正例：**
+
+```java
+if (logger.isDebugEnabled()) {
+    logger.debug("Current ID is: {} and name is: {}", id, getName());
+}
+```
+
+#### 6. 【强制】避免重复打印日志，浪费磁盘空间，务必在 log4j.xml 中设置 additivity=false。
+
+> **正例：** 在 log4j.xml 中设置 additivity=false。
+
+#### 7. 【强制】生产环境禁止输出 debug 日志；有选择地输出 info 日志；如果使用 warn 来记录刚上线时的业务行为信息，一定要注意日志输出量的问题，避免把服务器磁盘撑爆，并记得及时删除这些观察日志。
+
+#### 8. 【强制】可以使用 warn 日志级别来记录用户输入参数错误的情况，避免用户投诉时，无所适从。如非必要，请不要在此场景打出 error 级别，避免频繁报警。
+
+> **说明：** 注意日志输出的级别，error 级别只记录系统逻辑出错、异常或者重要的错误信息。
+
+#### 9. 【推荐】谨慎地记录日志。生产环境禁止输出 debug 日志；有选择地输出 info 日志；如果使用 warn 来记录刚上线时的业务行为信息，一定要注意日志输出量的问题，避免把服务器磁盘撑爆，并记得及时删除这些观察日志。
+
+#### 10. 【推荐】尽量用英文来描述日志错误信息，如果日志中的错误信息用英文描述不清楚的话使用中文描述即可，但日志中的错误信息要便于用关键词搜索。
+
+> **说明：** 所有日志被收集起来，存储在 ElasticSearch 中，用中文搜索关键词是可以的。
+
+#### 11. 【推荐】日志文件推荐至少保存 15 天，因为有些异常具备以"周"为频次发生的特点。
+
+#### 12. 【参考】对于重要代码块，打印日志时使用 info 级别，在排查问题时，不至于缺少必要的信息。
+
+#### 13. 【参考】避免用 Apache Beanutils 进行属性的 copy。
